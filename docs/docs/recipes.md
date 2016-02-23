@@ -158,8 +158,13 @@ See the detailed docs on
 ### Command (executor) health checks
 
 Command health checks are executed on the slave where the task is running.
+<<<<<<< ffddaf67e219b315ff56910eb3476bf6e6a8ef8f
 To enable this feature for marathon versions prior to `0.7.4`, start
 Marathon with the `--executor_health_checks` flag (not required/allowed
+=======
+To enable this feature for marathon versions prior to `0.7.4`, start 
+Marathon with the `--executor_health_checks` flag (not required/allowed 
+>>>>>>> edits to recipes
 since `0.7.4`). Requires Mesos version `0.20.0` or later.
 
 ```json
@@ -195,6 +200,9 @@ However, there are times when you want to separate some machines from the common
 
 * Some nodes in your cluster have special hardware, such as very fast SSDs or GPUs, that you want to reserve for tasks that need this hardware.
 
+See the detailed docs on
+<a href="{{ site.baseurl }}/docs/constraints.html">constraints</a>.
+  
 ### Using roles
 
 You can configure some of your Mesos agents to only offer their resources to a specific Mesos role. Only Mesos frameworks (such as Marathon) that are configured for this specific Mesos role will get offers for these resources. In this way, you can prevent accidental usage of these resources by other Mesos frameworks.

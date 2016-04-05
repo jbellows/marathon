@@ -1,20 +1,20 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Imported from https://raw.githubusercontent.com/jbellows/mesos/0.28.0-calico/include/mesos/mesos.proto
+
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package mesos;
 
@@ -221,10 +221,14 @@ message FrameworkInfo {
   // failover).
   optional FrameworkID id = 3;
 
-  // The amount of time that the master will wait for the scheduler to
-  // failover before it tears down the framework by killing all its
-  // tasks/executors. This should be non-zero if a framework expects
-  // to reconnect after a failover and not lose its tasks/executors.
+  // The amount of time (in seconds) that the master will wait for the
+  // scheduler to failover before it tears down the framework by
+  // killing all its tasks/executors. This should be non-zero if a
+  // framework expects to reconnect after a failure and not lose its
+  // tasks/executors.
+  //
+  // NOTE: To avoid accidental destruction of tasks, production
+  // frameworks typically set this to a large value (e.g., 1 week).
   optional double failover_timeout = 4 [default = 0.0];
 
   // If set, framework pid, executor pids and status updates are
@@ -260,6 +264,11 @@ message FrameworkInfo {
       // message for details.
       // TODO(vinod): This is currently a no-op.
       REVOCABLE_RESOURCES = 1;
+
+      // Receive the TASK_KILLING TaskState when a task is being
+      // killed by an executor. The executor will examine this
+      // capability to determine whether it can send TASK_KILLING.
+      TASK_KILLING_STATE = 2;
     }
 
     required Type type = 1;
@@ -273,6 +282,7 @@ message FrameworkInfo {
   // Labels are free-form key value pairs supplied by the framework
   // scheduler (e.g., to describe additional functionality offered by
   // the framework). These labels are not interpreted by Mesos itself.
+  // Labels should not contain duplicate key-value pairs.
   optional Labels labels = 11;
 }
 
@@ -433,13 +443,15 @@ message ExecutorInfo {
   repeated Resource resources = 5;
   optional string name = 9;
 
-  // Source is an identifier style string used by frameworks to track
-  // the source of an executor. This is useful when it's possible for
-  // different executor ids to be related semantically.
-  // NOTE: Source is exposed alongside the resource usage of the
-  // executor via JSON on the slave. This allows users to import
-  // usage information into a time series database for monitoring.
+  // 'source' is an identifier style string used by frameworks to
+  // track the source of an executor. This is useful when it's
+  // possible for different executor ids to be related semantically.
+  //
+  // NOTE: 'source' is exposed alongside the resource usage of the
+  // executor via JSON on the slave. This allows users to import usage
+  // information into a time series database for monitoring.
   optional string source = 10;
+
   optional bytes data = 4;
 
   // Service discovery information for the executor. It is not
@@ -521,6 +533,14 @@ message Value {
   }
 
   message Scalar {
+    // Scalar values are represented using floating point. To reduce
+    // the chance of unpredictable floating point behavior due to
+    // roundoff error, Mesos only supports three decimal digits of
+    // precision for scalar resource values. That is, floating point
+    // values are converted to a fixed point format that supports
+    // three decimal digits of precision, and then converted back to
+    // floating point on output. Any additional precision in scalar
+    // resource values is discarded (via rounding).
     required double value = 1;
   }
 
@@ -565,13 +585,17 @@ message Attribute {
 
 
 /**
- * Describes a resource on a machine. A resource can take on one of
- * three types: scalar (double), a list of finite and discrete ranges
- * (e.g., [1-10, 20-30]), or a set of items. A resource is described
- * using the standard protocol buffer "union" trick.
+ * Describes a resource on a machine. The `name` field is a string
+ * like "cpus" or "mem" that indicates which kind of resource this is;
+ * the rest of the fields describe the properties of the resource. A
+ * resource can take on one of three types: scalar (double), a list of
+ * finite and discrete ranges (e.g., [1-10, 20-30]), or a set of
+ * items. A resource is described using the standard protocol buffer
+ * "union" trick.
  *
- * TODO(benh): Add better support for "expected" resources (e.g.,
- * cpus, memory, disk, network).
+ * Note that "disk" and "mem" resources are scalar values expressed in
+ * megabytes. Fractional "cpus" values are allowed (e.g., "0.5"),
+ * which correspond to partial shares of a CPU.
  */
 message Resource {
   required string name = 1;
@@ -589,13 +613,21 @@ message Resource {
     // NOTE: We currently do not allow frameworks with role "*" to
     // make dynamic reservations.
 
-    // This field indicates the principal of the operator or framework
-    // that reserved this resource. It is used in conjunction with the
-    // "unreserve" ACL to determine whether the entity attempting to
-    // unreserve this resource is permitted to do so.
-    // NOTE: This field should match the FrameworkInfo.principal of
-    // the framework that reserved this resource.
-    required string principal = 1;
+    // Indicates the principal, if any, of the framework or operator
+    // that reserved this resource. If reserved by a framework, the
+    // field should match the `FrameworkInfo.principal`. It is used in
+    // conjunction with the `UnreserveResources` ACL to determine
+    // whether the entity attempting to unreserve this resource is
+    // permitted to do so.
+    optional string principal = 1;
+
+    // Labels are free-form key value pairs that can be used to
+    // associate arbitrary metadata with a reserved resource.  For
+    // example, frameworks can use labels to identify the intended
+    // purpose for a portion of the resources the framework has
+    // reserved at a given slave. Labels should not contain duplicate
+    // key-value pairs.
+    optional Labels labels = 2;
   }
 
   // If this is set, this resource was dynamically reserved by an
@@ -684,6 +716,99 @@ message TrafficControlStatistics {
   optional uint64 ratebps = 8;
   optional uint64 ratepps = 9;
   optional uint64 requeues = 10;
+}
+
+
+message IpStatistics {
+  optional int64 Forwarding =  1;
+  optional int64 DefaultTTL =  2;
+  optional int64 InReceives =  3;
+  optional int64 InHdrErrors =  4;
+  optional int64 InAddrErrors =  5;
+  optional int64 ForwDatagrams =  6;
+  optional int64 InUnknownProtos = 7;
+  optional int64 InDiscards =  8;
+  optional int64 InDelivers  = 9;
+  optional int64 OutRequests = 10;
+  optional int64 OutDiscards = 11;
+  optional int64 OutNoRoutes = 12;
+  optional int64 ReasmTimeout = 13;
+  optional int64 ReasmReqds = 14;
+  optional int64 ReasmOKs = 15;
+  optional int64 ReasmFails = 16;
+  optional int64 FragOKs = 17;
+  optional int64 FragFails = 18;
+  optional int64 FragCreates = 19;
+}
+
+
+message IcmpStatistics {
+  optional int64 InMsgs = 1;
+  optional int64 InErrors =  2;
+  optional int64 InCsumErrors = 3;
+  optional int64 InDestUnreachs =  4;
+  optional int64 InTimeExcds = 5;
+  optional int64 InParmProbs =  6;
+  optional int64 InSrcQuenchs = 7;
+  optional int64 InRedirects = 8;
+  optional int64 InEchos = 9;
+  optional int64 InEchoReps = 10;
+  optional int64 InTimestamps = 11;
+  optional int64 InTimestampReps = 12;
+  optional int64 InAddrMasks = 13;
+  optional int64 InAddrMaskReps = 14;
+  optional int64 OutMsgs = 15;
+  optional int64 OutErrors = 16;
+  optional int64 OutDestUnreachs = 17;
+  optional int64 OutTimeExcds = 18;
+  optional int64 OutParmProbs = 19;
+  optional int64 OutSrcQuenchs = 20;
+  optional int64 OutRedirects = 21;
+  optional int64 OutEchos = 22;
+  optional int64 OutEchoReps = 23;
+  optional int64 OutTimestamps = 24;
+  optional int64 OutTimestampReps = 25;
+  optional int64 OutAddrMasks = 26;
+  optional int64 OutAddrMaskReps = 27;
+}
+
+
+message TcpStatistics {
+  optional int64 RtoAlgorithm = 1;
+  optional int64 RtoMin = 2;
+  optional int64 RtoMax = 3;
+  optional int64 MaxConn = 4;
+  optional int64 ActiveOpens = 5;
+  optional int64 PassiveOpens = 6;
+  optional int64 AttemptFails = 7;
+  optional int64 EstabResets = 8;
+  optional int64 CurrEstab = 9;
+  optional int64 InSegs = 10;
+  optional int64 OutSegs = 11;
+  optional int64 RetransSegs = 12;
+  optional int64 InErrs = 13;
+  optional int64 OutRsts = 14;
+  optional int64 InCsumErrors = 15;
+}
+
+
+message UdpStatistics {
+  optional int64 InDatagrams = 1;
+  optional int64 NoPorts = 2;
+  optional int64 InErrors = 3;
+  optional int64 OutDatagrams = 4;
+  optional int64 RcvbufErrors = 5;
+  optional int64 SndbufErrors = 6;
+  optional int64 InCsumErrors = 7;
+  optional int64 IgnoredMulti = 8;
+}
+
+
+message SNMPStatistics {
+  optional IpStatistics ip_stats = 1;
+  optional IcmpStatistics icmp_stats = 2;
+  optional TcpStatistics tcp_stats = 3;
+  optional UdpStatistics udp_stats = 4;
 }
 
 
@@ -788,6 +913,9 @@ message ResourceStatistics {
   // or dropped due to congestion or policy inside and outside the
   // container.
   repeated TrafficControlStatistics net_traffic_control_statistics = 35;
+
+  // Network SNMP statistics for each container.
+  optional SNMPStatistics net_snmp_statistics = 42;
 }
 
 
@@ -1052,6 +1180,7 @@ message TaskInfo {
   // acted upon by Mesos itself. As opposed to the data field, labels
   // will be kept in memory on master and slave processes. Therefore,
   // labels should be used to tag tasks with light-weight meta-data.
+  // Labels should not contain duplicate key-value pairs.
   optional Labels labels = 10;
 
   // Service discovery information for the task. It is not interpreted
@@ -1070,14 +1199,19 @@ message TaskInfo {
  * another task).
  */
 enum TaskState {
-  TASK_STAGING = 6; // Initial state. Framework status updates should not use.
-  TASK_STARTING = 0;
+  TASK_STAGING = 6;  // Initial state. Framework status updates should not use.
+  TASK_STARTING = 0; // The task is being launched by the executor.
   TASK_RUNNING = 1;
-  TASK_FINISHED = 2; // TERMINAL. The task finished successfully.
-  TASK_FAILED = 3; // TERMINAL. The task failed to finish successfully.
-  TASK_KILLED = 4; // TERMINAL. The task was killed by the executor.
-  TASK_LOST = 5; // TERMINAL. The task failed but can be rescheduled.
-  TASK_ERROR = 7; // TERMINAL. The task description contains an error.
+
+  // NOTE: This should only be sent when the framework has
+  // the TASK_KILLING_STATE capability.
+  TASK_KILLING = 8;  // The task is being killed by the executor.
+
+  TASK_FINISHED = 2; // TERMINAL: The task finished successfully.
+  TASK_FAILED = 3;   // TERMINAL: The task failed to finish successfully.
+  TASK_KILLED = 4;   // TERMINAL: The task was killed by the executor.
+  TASK_LOST = 5;     // TERMINAL: The task failed but can be rescheduled.
+  TASK_ERROR = 7;    // TERMINAL: The task description contains an error.
 }
 
 
@@ -1159,7 +1293,7 @@ message TaskStatus {
   // acted upon by Mesos itself. As opposed to the data field, labels
   // will be kept in memory on master and slave processes. Therefore,
   // labels should be used to tag TaskStatus message with light-weight
-  // meta-data.
+  // meta-data. Labels should not contain duplicate key-value pairs.
   optional Labels labels = 12;
 
   // Container related information that is resolved dynamically such as
@@ -1364,7 +1498,7 @@ message Volume {
  * Describes a network request from a framework as well as network resolution
  * provided by Mesos.
  *
- * A Framework may request the network isolator on the Agent to isolate the
+ * A framework may request the network isolator on the Agent to isolate the
  * container in a network namespace and create a virtual network interface.
  * The `NetworkInfo` message describes the properties of that virtual
  * interface, including the IP addresses and network isolation policy
@@ -1464,6 +1598,7 @@ message ContainerInfo {
       HOST = 1;
       BRIDGE = 2;
       NONE = 3;
+      CALICO = 4;
     }
 
     optional Network network = 2 [default = HOST];
@@ -1511,17 +1646,39 @@ message ContainerInfo {
 
 
 /**
- * Container related information that is resolved during container setup. The
- * information is sent back to the framework as part of the TaskStatus message.
+ * Container related information that is resolved during container
+ * setup. The information is sent back to the framework as part of the
+ * TaskStatus message.
  */
 message ContainerStatus {
   // This field can be reliably used to identify the container IP address.
   repeated NetworkInfo network_infos = 1;
+
+  // Information about Linux control group (cgroup).
+  optional CgroupInfo cgroup_info = 2;
 }
 
 
 /**
- * Collection of labels.
+ * Linux control group (cgroup) information.
+ */
+message CgroupInfo {
+  // Configuration of a net_cls cgroup subsystem.
+  message NetCls {
+    // The 32-bit classid consists of two parts, a 16 bit major handle
+    // and a 16-bit minor handle. The major and minor handle are
+    // represented using the format 0xAAAABBBB, where 0xAAAA is the
+    // 16-bit major handle and 0xBBBB is the 16-bit minor handle.
+    optional uint32 classid = 1;
+  }
+
+  optional NetCls net_cls = 1;
+}
+
+
+/**
+ * Collection of labels. Labels should not contain duplicate key-value
+ * pairs.
  */
 message Labels {
   repeated Label labels = 1;
@@ -1588,33 +1745,12 @@ message DiscoveryInfo {
 
 
 /**
-* Protobuf for the Appc image manifest JSON schema:
-* https://github.com/appc/spec/blob/master/spec/aci.md#image-manifest-schema
-* Where possible, any field required in the schema is required in the protobuf
-* but some cannot be expressed, e.g., a repeated string that has at least one
-* element. Further validation should be performed after parsing the JSON into
-* the protobuf.
-* This version of Appc protobuf is based on Appc spec version 0.6.1.
-* TODO(xujyan): This protobuf currently defines a subset of fields in the spec
-* that Mesos makes use of to avoid confusion. New fields are going to be added
-* when Mesos starts to support them.
-*/
-message AppcImageManifest {
-  required string acKind = 1;
-  required string acVersion = 2;
-  required string name = 3;
+ * Named WeightInfo to indicate resource allocation
+ * priority between the different roles.
+ */
+message WeightInfo {
+  required double weight = 1;
 
-  message Label {
-    required string name = 1;
-    required string value = 2;
-  }
-
-  repeated Label labels = 4;
-
-  message Annotation {
-    required string name = 1;
-    required string value = 2;
-  }
-
-  repeated Annotation annotations = 5;
+  // Related role name.
+  optional string role = 2;
 }
